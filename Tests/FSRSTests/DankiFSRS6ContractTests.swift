@@ -20,6 +20,24 @@ import Testing
         let parameters: Parameters
         let matrix: [MatrixVector]
         let seededSequence: [SeededStep]
+        let stressSequence: StressSequence
+    }
+
+    private struct StressSequence: Decodable {
+        let algorithm: String
+        let seed: UInt32
+        let count: Int
+        let startAt: String
+        let deltaMinutes: [Int]
+        let checkpointInterval: Int
+        let internalNumericTolerance: Double
+        let checkpoints: [StressCheckpoint]
+    }
+
+    private struct StressCheckpoint: Decodable {
+        let index: Int
+        let schedulingAt: String
+        let expected: Snapshot
     }
 
     private struct MatrixVector: Decodable {
@@ -59,6 +77,7 @@ import Testing
         #expect(fixture.parameters.dayArithmetic == "UTC calendar days")
         #expect(fixture.matrix.count == 96)
         #expect(fixture.seededSequence.count == 200)
+        #expect(fixture.stressSequence.count == 10_000)
         #expect(Set(fixture.matrix.map {
             "\($0.state)|\($0.scenario)|\($0.rating)"
         }).count == fixture.matrix.count)
@@ -91,6 +110,38 @@ import Testing
         }
     }
 
+    @Test func deterministicStressHistoryMatchesContract() throws {
+        let fixture = try loadFixture()
+        let stress = fixture.stressSequence
+        #expect(stress.algorithm == "lcg32-v1")
+        let fsrs = scheduler(fixture.parameters)
+        var random = stress.seed
+        var schedulingAt = try date(stress.startAt)
+        var current = Card(due: schedulingAt)
+        var checkpointIndex = 0
+        for index in 1...stress.count {
+            random = lcg32(random)
+            let rating = try #require(Rating(rawValue: Int(random % 4) + 1))
+            random = lcg32(random)
+            let delta = stress.deltaMinutes[Int(random % UInt32(stress.deltaMinutes.count))]
+            schedulingAt = schedulingAt.addingTimeInterval(Double(delta) * 60)
+            current = try fsrs.next(card: current, now: schedulingAt, grade: rating).card
+            if index % stress.checkpointInterval == 0 {
+                let checkpoint = stress.checkpoints[checkpointIndex]
+                checkpointIndex += 1
+                #expect(checkpoint.index == index)
+                #expect(abs(schedulingAt.timeIntervalSince(try date(checkpoint.schedulingAt))) < 0.001)
+                try expect(
+                    current,
+                    matches: checkpoint.expected,
+                    context: "stress step \(index)",
+                    internalNumericTolerance: stress.internalNumericTolerance
+                )
+            }
+        }
+        #expect(checkpointIndex == stress.checkpoints.count)
+    }
+
     private func scheduler(_ parameters: Fixture.Parameters) -> FSRS {
         FSRS(parameters: FSRSParameters(
             requestRetention: parameters.requestRetention,
@@ -118,11 +169,16 @@ import Testing
         )
     }
 
-    private func expect(_ actual: Card, matches expected: Snapshot, context: String) throws {
+    private func expect(
+        _ actual: Card,
+        matches expected: Snapshot,
+        context: String,
+        internalNumericTolerance: Double = 0.00000001
+    ) throws {
         #expect(actual.state.rawValue == expected.stateRaw, Comment(rawValue: context))
         #expect(abs(actual.due.timeIntervalSince(try date(expected.dueAt))) < 0.001, Comment(rawValue: context))
-        #expect(abs(actual.stability - expected.stability) < 0.00000001, Comment(rawValue: context))
-        #expect(abs(actual.difficulty - expected.difficulty) < 0.00000001, Comment(rawValue: context))
+        #expect(abs(actual.stability - expected.stability) < internalNumericTolerance, Comment(rawValue: context))
+        #expect(abs(actual.difficulty - expected.difficulty) < internalNumericTolerance, Comment(rawValue: context))
         #expect(actual.reps == expected.reps, Comment(rawValue: context))
         #expect(actual.lapses == expected.lapses, Comment(rawValue: context))
         #expect(abs(actual.scheduledDays - expected.scheduledDays) < 0.00000001, Comment(rawValue: context))
@@ -151,5 +207,9 @@ import Testing
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return try #require(formatter.date(from: value))
+    }
+
+    private func lcg32(_ value: UInt32) -> UInt32 {
+        value &* 1_664_525 &+ 1_013_904_223
     }
 }
