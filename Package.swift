@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "FSRS",
     platforms: [
-        .macOS(.v10_13), .iOS(.v14),
+        .macOS(.v10_13), .iOS(.v14), .watchOS(.v7),
     ],
     products: [
         .library(
@@ -24,7 +24,8 @@ let package = Package(
         .testTarget(
             name: "FSRSTests",
             dependencies: ["FSRS"],
-            path: "./Tests/FSRSTests"
+            path: "./Tests/FSRSTests",
+            resources: [.copy("Fixtures")]
         ),
     ]
 )
