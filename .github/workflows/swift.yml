@@ -36,9 +36,12 @@ jobs:
           output-file: ./coverage/lcov.info
     
     - name: Upload coverage reports to Codecov
+      if: ${{ env.CODECOV_TOKEN != '' }}
       uses: codecov/codecov-action@v4
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       with:
-        token: ${{ secrets.CODECOV_TOKEN }}
+        token: ${{ env.CODECOV_TOKEN }}
         file: ./coverage/lcov.info
         flags: unittests
         name: codecov-umbrella
